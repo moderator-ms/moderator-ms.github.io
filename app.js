@@ -1,5 +1,5 @@
 // --- Supabase Configuration ---
-const SUPABASE_URL = 'https://uwbaodztrzofrnomrxde.supabase.co/rest/v1/';
+const SUPABASE_URL = 'https://uwbaodztrzofrnomrxde.supabase.co/';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV3YmFvZHp0cnpvZnJub21yeGRlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU5MjIxMzQsImV4cCI6MjEwMTQ5ODEzNH0.D6q734KEJyA0Oh0smjQPXSHZMsil9oMdUEOLaRix4vM';
 const db = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
