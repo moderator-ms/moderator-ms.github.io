@@ -1,66 +1,145 @@
 <!doctype html>
 <html lang="en">
 <head>
-
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Sanvee's Moderator Management System</title>
-<link rel="stylesheet" href="style.css">
-
-<!-- Include Supabase JS SDK -->
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Sanvee's Moderator Management System</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
-<header><div><h1>Sanvee’s By Tony</h1><p>Moderator Management System</p></div><div id="clock"></div></header>
-<nav>
-<button onclick="show('dashboard')">Dashboard</button>
-<button onclick="show('attendance')">Attendance</button>
-<button onclick="show('moderators')">Moderators</button>
-<button onclick="show('leave')">Leave</button>
-<button onclick="show('reports')">Reports</button>
-</nav>
-<main>
-<section id="dashboard" class="page">
-<h2>Dashboard</h2><div class="cards">
-<div class="card"><b id="total">0</b><span>Total Moderators</span></div>
-<div class="card"><b id="present">0</b><span>Present Today</span></div>
-<div class="card"><b id="off">0</b><span>Weekly Off Today</span></div>
-<div class="card"><b id="leaveCount">0</b><span>On Leave</span></div>
-<div class="card"><b id="absent">0</b><span>Absent Today</span></div>
-</div>
-<div class="panel"><h3>Today's Weekly Off</h3><div id="todayOff"></div></div>
-</section>
+  <div id="loginOverlay" class="overlay active">
+    <div class="modal login-modal">
+      <h2>Moderator Access</h2>
+      <p>Enter your credentials to continue. Only authorized users may access the dashboard.</p>
+      <input id="loginEmail" type="email" placeholder="Email" autocomplete="username">
+      <input id="loginPassword" type="password" placeholder="Password" autocomplete="current-password">
+      <button type="button" class="primary" onclick="handleLogin()">Unlock Dashboard</button>
+    </div>
+  </div>
 
-<section id="attendance" class="page hidden">
-<div class="titleRow"><h2>Daily Attendance</h2><input type="date" id="attDate" onchange="renderAttendance()"></div>
-<div class="panel tableWrap"><table><thead><tr><th>SL</th><th>Name</th><th>Weekend</th><th>Status</th></tr></thead><tbody id="attBody"></tbody></table></div>
-<button class="primary" onclick="saveAttendance()">Save Attendance</button>
-</section>
+  <div id="modalOverlay" class="overlay hidden" onclick="closeModal(event)">
+    <div class="modal detail-modal" onclick="event.stopPropagation()">
+      <div class="modalHeader">
+        <div>
+          <h3 id="modalTitle"></h3>
+          <p id="modalSubtitle"></p>
+        </div>
+        <button class="iconBtn" onclick="closeModal()">×</button>
+      </div>
+      <div id="modalContent"></div>
+    </div>
+  </div>
 
-<section id="moderators" class="page hidden">
-<div class="titleRow"><h2>All Moderator List</h2><input id="search" placeholder="Search moderator..." oninput="renderMods()"></div>
-<div class="panel tableWrap"><table><thead><tr><th>SL</th><th>Name</th><th>Weekend</th><th>Number</th><th>Joining Date</th><th>Action</th></tr></thead><tbody id="modBody"></tbody></table></div>
-<h3>Add Moderator</h3><div class="form">
-<input id="n" placeholder="Name"><select id="w"><option>Saturday</option><option>Sunday</option><option>Monday</option><option>Tuesday</option><option>Wednesday</option><option>Thursday</option><option>Friday</option></select>
-<input id="p" placeholder="Phone"><input id="j" placeholder="Joining Date (DD-MM-YYYY)"><button class="primary" onclick="addMod()">Add</button>
-</div>
-</section>
+  <header>
+    <div>
+      <h1>Sanvee’s By Tony</h1>
+      <p>Moderator Management System</p>
+    </div>
+    <div class="headerRight">
+      <div id="clock"></div>
+      <button class="ghostBtn" onclick="logout()">Logout</button>
+    </div>
+  </header>
 
-<section id="leave" class="page hidden">
-<h2>Leave Management</h2><div class="panel form">
-<select id="leaveMod"></select><input type="date" id="leaveStart"><input type="date" id="leaveEnd">
-<select id="leaveType"><option>Casual Leave</option><option>Sick Leave</option><option>Emergency Leave</option><option>Other</option></select>
-<input id="leaveReason" placeholder="Reason"><button class="primary" onclick="addLeave()">Save Leave</button>
-</div>
-<div class="panel tableWrap"><table><thead><tr><th>Name</th><th>From</th><th>To</th><th>Type</th><th>Reason</th><th></th></tr></thead><tbody id="leaveBody"></tbody></table></div>
-</section>
+  <nav>
+    <button id="nav-dashboard" onclick="show('dashboard')">Dashboard</button>
+    <button id="nav-attendance" onclick="show('attendance')">Attendance</button>
+    <button id="nav-moderators" onclick="show('moderators')">Moderators</button>
+    <button id="nav-leave" onclick="show('leave')">Leave</button>
+    <button id="nav-reports" onclick="show('reports')">Reports</button>
+    <button id="nav-config" onclick="show('config')">Config</button>
+  </nav>
 
-<section id="reports" class="page hidden">
-<h2>Monthly Report</h2><div class="panel"><input type="month" id="reportMonth"><button class="primary" onclick="report()">Generate</button><div id="reportOut"></div></div>
-</section>
-</main>
-<footer>Sanvee's Moderator Management System</footer>
-<script src="app.js"></script>
-</body></html>  
+  <main>
+    <section id="dashboard" class="page">
+      <div class="titleRow"><div><h2>Dashboard</h2><p class="sectionNote">Click any card to see details and active assignments.</p></div></div>
+      <div class="cards">
+        <div class="card interactive" onclick="openDashboardModal('total')"><b id="total">0</b><span>Total Moderators</span></div>
+        <div class="card interactive" onclick="openDashboardModal('present')"><b id="present">0</b><span>Present Today</span></div>
+        <div class="card interactive" onclick="openDashboardModal('off')"><b id="off">0</b><span>Weekly Off Today</span></div>
+        <div class="card interactive" onclick="openDashboardModal('leave')"><b id="leaveCount">0</b><span>On Leave</span></div>
+        <div class="card interactive" onclick="openDashboardModal('absent')"><b id="absent">0</b><span>Absent Today</span></div>
+        <div class="card interactive" onclick="openDashboardModal('night')"><b id="nightCount">0</b><span>Night Shift</span></div>
+        <div class="card interactive" onclick="openDashboardModal('outside')"><b id="outsideCount">0</b><span>Outside Duty</span></div>
+      </div>
+      <div class="panel gridPanel">
+        <div>
+          <h3>Today's Weekly Off</h3>
+          <div id="todayOff"></div>
+        </div>
+        <div>
+          <h3>Today's Night Shift</h3>
+          <div id="todayNight"></div>
+        </div>
+        <div>
+          <h3>Today Outside Duty</h3>
+          <div id="todayOutside"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="attendance" class="page hidden">
+      <div class="titleRow"><div><h2>Daily Attendance</h2><p class="sectionNote">Record attendance and keep the team updated.</p></div><input type="date" id="attDate" onchange="renderAttendance()"></div>
+      <div class="panel tableWrap"><table><thead><tr><th>SL</th><th>Name</th><th>Weekend</th><th>Status</th></tr></thead><tbody id="attBody"></tbody></table></div>
+      <button type="button" class="primary" onclick="saveAttendance()">Save Attendance</button>
+    </section>
+
+    <section id="moderators" class="page hidden">
+      <div class="titleRow"><div><h2>Moderator Management</h2><p class="sectionNote">Edit weekdays, salaries or assign special duties from here.</p></div><input id="search" placeholder="Search moderator..." oninput="renderMods()"></div>
+      <h3>Add Moderator</h3>
+      <div class="panel form moderatorForm">
+        <input id="modName" placeholder="Name">
+        <select id="modWeekend"><option>Saturday</option><option>Sunday</option><option>Monday</option><option>Tuesday</option><option>Wednesday</option><option>Thursday</option><option>Friday</option></select>
+        <input id="modSalary" placeholder="Salary" type="number" min="0">
+        <input id="modPhone" placeholder="Phone">
+        <input id="modJoining" placeholder="Joining Date (YYYY-MM-DD)" type="date">
+        <button type="button" class="primary" onclick="addMod()">Add Moderator</button>
+      </div>
+      <div class="panel tableWrap"><table><thead><tr><th>SL</th><th>Name</th><th>Weekend</th><th>Salary</th><th>Phone</th><th>Joining</th><th>Status</th><th>Actions</th></tr></thead><tbody id="modBody"></tbody></table></div>
+    </section>
+
+    <section id="leave" class="page hidden">
+      <div class="titleRow"><div><h2>Leave Management</h2><p class="sectionNote">Track leave records and review request details.</p></div></div>
+      <div class="panel form">
+        <select id="leaveMod"></select>
+        <input type="date" id="leaveStart">
+        <input type="date" id="leaveEnd">
+        <select id="leaveType"><option>Casual Leave</option><option>Sick Leave</option><option>Emergency Leave</option><option>Other</option></select>
+        <input id="leaveReason" placeholder="Reason">
+        <button type="button" class="primary" onclick="addLeave()">Save Leave</button>
+      </div>
+      <div class="panel tableWrap"><table><thead><tr><th>Name</th><th>From</th><th>To</th><th>Type</th><th>Reason</th><th></th></tr></thead><tbody id="leaveBody"></tbody></table></div>
+    </section>
+
+    <section id="reports" class="page hidden">
+      <div class="titleRow"><div><h2>Reports</h2><p class="sectionNote">Choose a date range and report type, then export or print the result.</p></div></div>
+      <div class="panel form reportForm no-print">
+        <label>From <input type="date" id="reportStart"></label>
+        <label>To <input type="date" id="reportEnd"></label>
+        <select id="reportType"><option value="all">All</option><option value="attendance">Attendance</option><option value="leave">Leave</option><option value="night">Night Shift</option><option value="outside">Outside Duty</option></select>
+        <button type="button" class="primary" onclick="generateReport()">Generate Report</button>
+        <button id="printReportButton" type="button" class="secondary no-print" onclick="printReport()" disabled>Print Report</button>
+      </div>
+      <div class="panel" id="reportOut"></div>
+    </section>
+
+    <section id="config" class="page hidden">
+      <div class="titleRow"><div><h2>Config</h2><p class="sectionNote">Change login credentials and preserve secure access.</p></div></div>
+      <div class="panel form configForm">
+        <input id="configEmail" type="email" placeholder="Admin Email">
+        <input id="configPassword" type="password" placeholder="Admin Password">
+        <button type="button" class="primary" onclick="saveConfig()">Save Config</button>
+      </div>
+      <div class="panel">
+        <h3>Current Access</h3>
+        <p><strong>Email:</strong> <span id="currentEmail"></span></p>
+        <p><strong>Password:</strong> <span id="currentPassword"></span></p>
+      </div>
+    </section>
+  </main>
+
+  <footer>Sanvee's Moderator Management System • Designed for reliable moderator operations</footer>
+  <script src="app.js"></script>
+</body>
+</html>
