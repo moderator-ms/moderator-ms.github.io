@@ -1,9 +1,18 @@
-const SUPABASE_URL = 'https://uwbaodztrzofrnomrxde.supabase.co/';
-const SUPABASE_ANON_KEY = '******';
-const db = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-const dbEnabled = SUPABASE_ANON_KEY && !SUPABASE_ANON_KEY.includes('*') && !SUPABASE_ANON_KEY.includes('YOUR');
+// Firebase configuration for Moderator-MS project.
+const firebaseConfig = {
+  apiKey: "AIzaSyCmIPVe2SkazmzF_zgWXpilh0T_KjMskeg",
+  authDomain: "moderator-ms.firebaseapp.com",
+  projectId: "moderator-ms",
+  storageBucket: "moderator-ms.firebasestorage.app",
+  messagingSenderId: "25291129708",
+  appId: "1:25291129708:web:aeeecd600ab9c4ee572949",
+  measurementId: "G-3DFVCVZPHS"
+};
+const firebaseApp = firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const db = firebase.firestore();
+const dbEnabled = firebaseConfig.apiKey && !firebaseConfig.apiKey.includes('YOUR');
 const storageKey = 'moderator-ms-state';
-const defaultConfig = { username: 'manik@gmail.com', password: '@Manik1243' };
 const printReportBtn = document.getElementById('printReportButton');
 
 const seed = [
@@ -40,7 +49,6 @@ let leaves = [];
 let nightShifts = [];
 let outsideDuty = [];
 let attendanceMap = {};
-let configData = { ...defaultConfig };
 let isAuthenticated = false;
 
 function isoLocal(d = new Date()) {
@@ -58,7 +66,7 @@ function getStoredState() {
 }
 
 function saveState() {
-  localStorage.setItem(storageKey, JSON.stringify({ mods, leaves, nightShifts, outsideDuty, attendanceMap, configData }));
+  localStorage.setItem(storageKey, JSON.stringify({ mods, leaves, nightShifts, outsideDuty, attendanceMap }));
 }
 
 function statusLabel(mod) {
@@ -82,17 +90,13 @@ function activeOutside(id, date) {
   return outsideDuty.some(item => `${item.modId}` === `${id}` && date >= item.start && date <= item.end);
 }
 
-async function attemptDbLoad(table) {
+async function attemptDbLoad(collectionName) {
   if (!dbEnabled) return null;
   try {
-    const { data, error } = await db.from(table).select('*');
-    if (error) {
-      console.warn(`Supabase table load failed (${table}):`, error.message);
-      return null;
-    }
-    return data;
+    const snapshot = await db.collection(collectionName).get();
+    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
   } catch (error) {
-    console.warn(`Supabase fetch exception for ${table}:`, error);
+    console.warn(`Firebase fetch exception for ${collectionName}:`, error);
     return null;
   }
 }
@@ -120,11 +124,16 @@ function updateAccessUI() {
 
 async function getAttendance(date) {
   if (dbEnabled) {
-    const { data, error } = await db.from('attendance').select('*').eq('date', date);
-    if (!error && data) {
+    try {
+      const snapshot = await db.collection('attendance').where('date', '==', date).get();
       const map = {};
-      data.forEach(entry => { map[entry.name] = entry.status; });
+      snapshot.docs.forEach(doc => {
+        const entry = doc.data();
+        map[entry.name] = entry.status;
+      });
       return map;
+    } catch (error) {
+      console.warn('Firebase attendance load failed:', error);
     }
   }
   return attendanceMap[date] || {};
@@ -138,9 +147,13 @@ async function saveAttendance() {
   });
 
   if (dbEnabled) {
-    const { error } = await db.from('attendance').upsert(updates, { onConflict: 'date,name' });
-    if (error) {
-      console.warn('Attendance save failed, using local state:', error.message);
+    try {
+      await Promise.all(updates.map(item => {
+        const id = `${item.date}_${item.name}`;
+        return db.collection('attendance').doc(id).set(item);
+      }));
+    } catch (error) {
+      console.warn('Attendance save failed, using local state:', error);
     }
   }
   attendanceMap[date] = updates.reduce((acc, item) => ({ ...acc, [item.name]: item.status }), {});
@@ -148,7 +161,6 @@ async function saveAttendance() {
   alert('Attendance saved successfully.');
   dash();
 }
-
 async function dash() {
   const date = isoLocal();
   const dayName = dayOf(date);
@@ -220,11 +232,11 @@ async function addMod() {
   };
 
   if (dbEnabled) {
-    const { data, error } = await db.from('moderators').insert([{ name, weekend, phone, joining }]).select();
-    if (error) {
-      console.warn('Failed to save moderator to Supabase:', error.message);
-    } else if (data && data[0]) {
-      newMod.id = data[0].id?.toString() || newMod.id;
+    try {
+      const docRef = await db.collection('moderators').add({ name, weekend, phone, joining, salary });
+      newMod.id = docRef.id;
+    } catch (error) {
+      console.warn('Failed to save moderator to Firebase:', error);
     }
   }
 
@@ -244,12 +256,15 @@ async function delMod(id) {
   if (!mod) return;
 
   if (dbEnabled && !`${mod.id}`.startsWith('local-')) {
-    const { error } = await db.from('moderators').delete().eq('id', mod.id);
-    if (error) console.warn('Failed to delete moderator from Supabase:', error.message);
-    const { error: nightErr } = await db.from('night_shifts').delete().eq('mod_id', mod.id);
-    if (nightErr) console.warn('Failed to delete night shift records:', nightErr.message);
-    const { error: outsideErr } = await db.from('outside_duty').delete().eq('mod_id', mod.id);
-    if (outsideErr) console.warn('Failed to delete outside duty records:', outsideErr.message);
+   try {
+     await db.collection('moderators').doc(mod.id).delete();
+     const nightSnapshot = await db.collection('night_shifts').where('modId', '==', mod.id).get();
+     await Promise.all(nightSnapshot.docs.map(doc => doc.ref.delete()));
+     const outsideSnapshot = await db.collection('outside_duty').where('modId', '==', mod.id).get();
+     await Promise.all(outsideSnapshot.docs.map(doc => doc.ref.delete()));
+   } catch (error) {
+     console.warn('Failed to delete moderator data from Firebase:', error);
+   }
   }
 
   mods = mods.filter(item => `${item.id}` !== `${id}`);
@@ -291,8 +306,11 @@ async function saveModChanges(id) {
 
   const updated = { name, weekend, phone, joining };
   if (dbEnabled && !`${mod.id}`.startsWith('local-')) {
-    const { error } = await db.from('moderators').update(updated).eq('id', mod.id);
-    if (error) console.warn('Failed to update moderator in Supabase:', error.message);
+   try {
+     await db.collection('moderators').doc(mod.id).update(updated);
+   } catch (error) {
+     console.warn('Failed to update moderator in Firebase:', error);
+   }
   }
 
   Object.assign(mod, updated, { salary });
@@ -328,8 +346,11 @@ async function saveNightShift(id) {
   if (index >= 0) nightShifts[index] = record;
   else nightShifts.push(record);
   if (dbEnabled) {
-    const { error } = await db.from('night_shifts').upsert([{ id: record.id, mod_id: record.modId, name: record.name, start_date: record.start, end_date: record.end }], { onConflict: 'id' });
-    if (error) console.warn('Failed to save night shift to Supabase:', error.message);
+   try {
+     await db.collection('night_shifts').doc(record.id).set({ id: record.id, modId: record.modId, name: record.name, start: record.start, end: record.end });
+   } catch (error) {
+     console.warn('Failed to save night shift to Firebase:', error);
+   }
   }
   renderMods();
   dash();
@@ -365,8 +386,11 @@ async function saveOutsideDuty(id) {
   if (index >= 0) outsideDuty[index] = record;
   else outsideDuty.push(record);
   if (dbEnabled) {
-    const { error } = await db.from('outside_duty').upsert([{ id: record.id, mod_id: record.modId, name: record.name, start_date: record.start, end_date: record.end, notes: record.notes }], { onConflict: 'id' });
-    if (error) console.warn('Failed to save outside duty to Supabase:', error.message);
+   try {
+     await db.collection('outside_duty').doc(record.id).set({ id: record.id, modId: record.modId, name: record.name, start: record.start, end: record.end, notes: record.notes });
+   } catch (error) {
+     console.warn('Failed to save outside duty to Firebase:', error);
+   }
   }
   renderMods();
   dash();
@@ -392,8 +416,11 @@ async function addLeave() {
   };
 
   if (dbEnabled) {
-    const { error } = await db.from('leaves').insert([{ name: leave.name, start_date: leave.start, end_date: leave.end, type: leave.type, reason: leave.reason }]);
-    if (error) console.warn('Failed to save leave to Supabase:', error.message);
+   try {
+     await db.collection('leaves').doc(leave.id).set({ name: leave.name, start: leave.start, end: leave.end, type: leave.type, reason: leave.reason });
+   } catch (error) {
+     console.warn('Failed to save leave to Firebase:', error);
+   }
   }
 
   leaves.push(leave);
@@ -413,8 +440,11 @@ async function delLeave(id) {
   if (!leave) return;
   if (!confirm('Delete this leave?')) return;
   if (dbEnabled && !leave.id.startsWith('leave-')) {
-    const { error } = await db.from('leaves').delete().eq('id', leave.id);
-    if (error) console.warn('Failed to delete leave from Supabase:', error.message);
+   try {
+     await db.collection('leaves').doc(leave.id).delete();
+   } catch (error) {
+     console.warn('Failed to delete leave from Firebase:', error);
+   }
   }
   leaves = leaves.filter(item => item.id !== id);
   renderLeaves();
@@ -443,13 +473,16 @@ async function generateReport() {
   const dateRange = getRange(start, end);
   let attendanceRange = {};
   if (dbEnabled) {
-    const { data, error } = await db.from('attendance').select('*').gte('date', start).lte('date', end);
-    if (!error && data) {
-      data.forEach(item => {
-        if (!attendanceRange[item.date]) attendanceRange[item.date] = {};
-        attendanceRange[item.date][item.name] = item.status;
-      });
-    }
+   try {
+     const snapshot = await db.collection('attendance').where('date', '>=', start).where('date', '<=', end).get();
+     snapshot.docs.forEach(doc => {
+       const item = doc.data();
+       if (!attendanceRange[item.date]) attendanceRange[item.date] = {};
+       attendanceRange[item.date][item.name] = item.status;
+     });
+   } catch (error) {
+     console.warn('Failed to load attendance report from Firebase:', error);
+   }
   } else {
     attendanceRange = attendanceMap;
   }
@@ -538,24 +571,36 @@ function printReport() {
 }
 
 function renderConfig() {
-  configEmail.value = configData.username;
-  configPassword.value = configData.password;
-  currentEmail.textContent = configData.username;
-  currentPassword.textContent = configData.password ? '*'.repeat(Math.max(configData.password.length, 6)) : 'Not set';
+  const user = auth.currentUser;
+  configEmail.value = user ? user.email : '';
+  configPassword.value = '';
+  currentEmail.textContent = user ? user.email : 'Not signed in';
+  currentPassword.textContent = user ? '********' : 'Not signed in';
 }
 
 async function saveConfig() {
+  const user = auth.currentUser;
+  if (!user) return alert('No authenticated user found. Please log in first.');
+
   const email = configEmail.value.trim();
   const password = configPassword.value.trim();
   if (!email || !password) return alert('Enter both email and password.');
-  configData = { username: email, password };
-  saveState();
-  renderConfig();
-  if (dbEnabled) {
-    const { error } = await db.from('config').upsert([{ id: 1, username: email, password }], { onConflict: 'id' });
-    if (error) console.warn('Failed to persist config to Supabase:', error.message);
+
+  try {
+    if (email !== user.email) {
+      await user.updateEmail(email);
+    }
+    await user.updatePassword(password);
+    renderConfig();
+    alert('Login credentials updated successfully. Use the new email and password next time you sign in.');
+  } catch (error) {
+    console.warn('Failed to update Firebase credentials:', error);
+    if (error.code === 'auth/requires-recent-login') {
+      alert('Please log out and log in again before updating credentials.');
+      return;
+    }
+    alert(error.message || 'Unable to update login credentials.');
   }
-  alert('Login configuration saved.');
 }
 
 function openModal(title, subtitle, cssClass, contentHtml) {
@@ -573,19 +618,29 @@ function closeModal(event) {
   modalContent.innerHTML = '';
 }
 
-function handleLogin() {
+async function handleLogin() {
   const email = loginEmail.value.trim();
   const password = loginPassword.value.trim();
-  if (email === configData.username && password === configData.password) {
+  if (!email || !password) return alert('Enter both email and password.');
+
+  try {
+    await auth.signInWithEmailAndPassword(email, password);
     isAuthenticated = true;
     updateAccessUI();
+    renderConfig();
     show('dashboard');
-    return;
+  } catch (error) {
+    console.warn('Firebase login failed:', error);
+    alert(error.message || 'Invalid credentials. Please verify your username and password.');
   }
-  alert('Invalid credentials. Please verify your username and password.');
 }
 
-function logout() {
+async function logout() {
+  try {
+    await auth.signOut();
+  } catch (error) {
+    console.warn('Firebase sign-out failed:', error);
+  }
   isAuthenticated = false;
   updateAccessUI();
   loginEmail.value = '';
@@ -646,7 +701,6 @@ async function openDashboardModal(type) {
 
 async function init() {
   const stored = getStoredState();
-  if (stored.configData) configData = { ...configData, ...stored.configData };
   if (stored.nightShifts) nightShifts = stored.nightShifts;
   if (stored.outsideDuty) outsideDuty = stored.outsideDuty;
   if (stored.attendanceMap) attendanceMap = stored.attendanceMap;
@@ -654,14 +708,14 @@ async function init() {
   const dbMods = await attemptDbLoad('moderators');
   if (dbMods && dbMods.length > 0) {
     mods = dbMods.map(mod => {
-      const local = stored.mods?.find(item => item.id === mod.id?.toString() || item.name === mod.name);
+      const local = stored.mods?.find(item => item.id === mod.id || item.name === mod.name);
       return {
-        id: mod.id?.toString() || `db-${Math.random().toString(36).slice(2, 6)}`,
+        id: mod.id || `db-${Math.random().toString(36).slice(2, 6)}`,
         name: mod.name,
         weekend: mod.weekend,
         phone: mod.phone,
         joining: mod.joining,
-        salary: local?.salary || ''
+        salary: local?.salary || mod.salary || ''
       };
     });
   } else if (stored.mods) {
@@ -673,10 +727,10 @@ async function init() {
   const dbLeaves = await attemptDbLoad('leaves');
   if (dbLeaves) {
     leaves = dbLeaves.map(item => ({
-      id: item.id?.toString() || `db-${Math.random().toString(36).slice(2, 6)}`,
+      id: item.id || `db-${Math.random().toString(36).slice(2, 6)}`,
       name: item.name,
-      start: item.start_date,
-      end: item.end_date,
+      start: item.start,
+      end: item.end,
       type: item.type,
       reason: item.reason
     }));
@@ -687,11 +741,11 @@ async function init() {
   const dbNight = await attemptDbLoad('night_shifts');
   if (dbNight) {
     nightShifts = dbNight.map(item => ({
-      id: item.id?.toString() || `night-${Math.random().toString(36).slice(2, 6)}`,
-      modId: item.mod_id?.toString() || item.modId?.toString(),
+      id: item.id || `night-${Math.random().toString(36).slice(2, 6)}`,
+      modId: item.modId || item.mod_id?.toString() || item.modId?.toString(),
       name: item.name,
-      start: item.start_date || item.start,
-      end: item.end_date || item.end
+      start: item.start || item.start_date,
+      end: item.end || item.end_date
     }));
   } else if (stored.nightShifts) {
     nightShifts = stored.nightShifts;
@@ -700,43 +754,46 @@ async function init() {
   const dbOutside = await attemptDbLoad('outside_duty');
   if (dbOutside) {
     outsideDuty = dbOutside.map(item => ({
-      id: item.id?.toString() || `outside-${Math.random().toString(36).slice(2, 6)}`,
-      modId: item.mod_id?.toString() || item.modId?.toString(),
+      id: item.id || `outside-${Math.random().toString(36).slice(2, 6)}`,
+      modId: item.modId || item.mod_id?.toString() || item.modId?.toString(),
       name: item.name,
-      start: item.start_date || item.start,
-      end: item.end_date || item.end,
+      start: item.start || item.start_date,
+      end: item.end || item.end_date,
       notes: item.notes || item.note || ''
     }));
   } else if (stored.outsideDuty) {
     outsideDuty = stored.outsideDuty;
   }
 
-  const dbConfig = await attemptDbLoad('config');
-  if (dbConfig && dbConfig.length > 0) {
-    configData = {
-      username: dbConfig[0].username || configData.username,
-      password: dbConfig[0].password || configData.password
-    };
-  }
-
   if (dbEnabled && dbMods && dbMods.length === 0) {
-    const { data, error } = await db.from('moderators').insert(seed).select();
-    if (data) {
-      mods = data.map(mod => ({ id: mod.id?.toString() || `db-${Math.random().toString(36).slice(2, 6)}`, name: mod.name, weekend: mod.weekend, phone: mod.phone, joining: mod.joining, salary: '' }));
+    try {
+      mods = await Promise.all(seed.map(async item => {
+        const docRef = await db.collection('moderators').add(item);
+        return { id: docRef.id, ...item, salary: '' };
+      }));
+    } catch (error) {
+      console.warn('Failed to seed Firebase moderators:', error);
     }
-    if (error) console.warn('Failed to seed database moderators:', error.message);
   }
 
   fillLeave();
   renderConfig();
   updateAccessUI();
-  show('dashboard');
   renderAttendance();
   renderMods();
   renderLeaves();
   reportStart.value = isoLocal(new Date(new Date().getFullYear(), new Date().getMonth(), 1));
   reportEnd.value = isoLocal();
   if (printReportBtn) printReportBtn.disabled = true;
+
+  auth.onAuthStateChanged(user => {
+    isAuthenticated = !!user;
+    renderConfig();
+    updateAccessUI();
+    if (isAuthenticated) {
+      show('dashboard');
+    }
+  });
 }
 
 setInterval(() => { clock.textContent = new Date().toLocaleString(); }, 1000);

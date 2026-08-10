@@ -5,7 +5,9 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Sanvee's Moderator Management System</title>
   <link rel="stylesheet" href="style.css">
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-auth-compat.js"></script>
 </head>
 <body>
   <div id="loginOverlay" class="overlay active">
@@ -33,7 +35,7 @@
 
   <header>
     <div>
-      <h1>Sanvee’s By Tony</h1>
+      <h1>Sanvee’s by Tony</h1>
       <p>Moderator Management System</p>
     </div>
     <div class="headerRight">
@@ -125,7 +127,7 @@
     </section>
 
     <section id="config" class="page hidden">
-      <div class="titleRow"><div><h2>Config</h2><p class="sectionNote">Change login credentials and preserve secure access.</p></div></div>
+      <div class="titleRow"><div><h2>Config</h2>      <p class="sectionNote">Update Firebase Authentication credentials for secure admin access.</p></div></div>
       <div class="panel form configForm">
         <input id="configEmail" type="email" placeholder="Admin Email">
         <input id="configPassword" type="password" placeholder="Admin Password">
