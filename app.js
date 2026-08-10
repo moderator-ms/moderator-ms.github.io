@@ -185,6 +185,7 @@ async function dash() {
   todayOff.innerHTML = offList.length ? offList.map(item => `<span class="badge">${item.name}</span>`).join(' ') : 'No weekly off today.';
   todayNight.innerHTML = nightList.length ? nightList.map(item => `<span class="badge">${item.name}</span>`).join(' ') : 'No night shift assigned today.';
   todayOutside.innerHTML = outsideList.length ? outsideList.map(item => `<span class="badge">${item.name}</span>`).join(' ') : 'No outside duty today.';
+  todayAbsent.innerHTML = absentList.length ? absentList.map(item => `<span class="badge">${item.name}</span>`).join(' ') : 'No absences today.';
 }
 
 async function renderAttendance() {
@@ -192,15 +193,22 @@ async function renderAttendance() {
   document.getElementById('attDate').value = date;
   const dayName = dayOf(date);
   const saved = await getAttendance(date);
+  const query = (document.getElementById('attSearch')?.value || '').toLowerCase();
 
-  attBody.innerHTML = mods.map((mod, index) => {
-    const auto = activeLeave(mod.name, date)
-      ? 'Leave'
-      : mod.weekend === dayName
-      ? 'Weekly Off'
-      : saved[mod.name] || 'Present';
-    return `<tr><td>${index + 1}</td><td>${mod.name}</td><td>${mod.weekend}</td><td><select data-name="${mod.name}" ${auto === 'Weekly Off' ? 'disabled' : ''}><option ${auto === 'Present' ? 'selected' : ''}>Present</option><option ${auto === 'Absent' ? 'selected' : ''}>Absent</option><option ${auto === 'Leave' ? 'selected' : ''}>Leave</option><option ${auto === 'Weekly Off' ? 'selected' : ''}>Weekly Off</option></select></td></tr>`;
-  }).join('');
+  attBody.innerHTML = mods
+    .filter(mod => {
+      const text = `${mod.name} ${mod.weekend} ${saved[mod.name] || ''}`.toLowerCase();
+      return text.includes(query);
+    })
+    .map((mod, index) => {
+      const auto = activeLeave(mod.name, date)
+        ? 'Leave'
+        : mod.weekend === dayName
+        ? 'Weekly Off'
+        : saved[mod.name] || 'Present';
+      return `<tr><td>${index + 1}</td><td>${mod.name}</td><td>${mod.weekend}</td><td><select data-name="${mod.name}"><option ${auto === 'Present' ? 'selected' : ''}>Present</option><option ${auto === 'Absent' ? 'selected' : ''}>Absent</option><option ${auto === 'Leave' ? 'selected' : ''}>Leave</option><option ${auto === 'Weekly Off' ? 'selected' : ''}>Weekly Off</option></select></td></tr>`;
+    })
+    .join('');
 }
 
 function renderMods() {
@@ -281,7 +289,9 @@ async function delMod(id) {
 function openEditMod(id) {
   const mod = mods.find(item => `${item.id}` === `${id}`);
   if (!mod) return;
-  openModal(`Edit ${mod.name}`, 'Update weekday, salary, phone, or joining date.', '', `
+  const night = nightShifts.find(item => `${item.modId}` === `${id}`) || {};
+  const outside = outsideDuty.find(item => `${item.modId}` === `${id}`) || {};
+  openModal(`Edit ${mod.name}`, 'Update weekday, salary, phone, joining date, or special duties.', '', `
     <div class="form">
       <input id="editName" placeholder="Name" value="${mod.name}">
       <select id="editWeekend"><option${mod.weekend === 'Saturday' ? ' selected' : ''}>Saturday</option><option${mod.weekend === 'Sunday' ? ' selected' : ''}>Sunday</option><option${mod.weekend === 'Monday' ? ' selected' : ''}>Monday</option><option${mod.weekend === 'Tuesday' ? ' selected' : ''}>Tuesday</option><option${mod.weekend === 'Wednesday' ? ' selected' : ''}>Wednesday</option><option${mod.weekend === 'Thursday' ? ' selected' : ''}>Thursday</option><option${mod.weekend === 'Friday' ? ' selected' : ''}>Friday</option></select>
@@ -289,6 +299,25 @@ function openEditMod(id) {
       <input id="editPhone" placeholder="Phone" value="${mod.phone}">
       <input id="editJoining" type="date" value="${mod.joining}">
       <button class="primary" onclick="saveModChanges('${mod.id}')">Save Changes</button>
+    </div>
+    <div class="form dutySection">
+      <h4>Night Shift</h4>
+      <input id="nightStart" type="date" value="${night.start || ''}">
+      <input id="nightEnd" type="date" value="${night.end || ''}">
+      <div class="buttonGroup">
+        <button class="primary" onclick="saveNightShift('${mod.id}')">Save Night Shift</button>
+        <button class="secondary" onclick="removeNightShift('${mod.id}')">Remove Night Shift</button>
+      </div>
+    </div>
+    <div class="form dutySection">
+      <h4>Outside Duty</h4>
+      <input id="outsideStart" type="date" value="${outside.start || ''}">
+      <input id="outsideEnd" type="date" value="${outside.end || ''}">
+      <input id="outsideNotes" placeholder="Notes" value="${outside.notes || ''}">
+      <div class="buttonGroup">
+        <button class="primary" onclick="saveOutsideDuty('${mod.id}')">Save Outside Duty</button>
+        <button class="secondary" onclick="removeOutsideDuty('${mod.id}')">Remove Outside Duty</button>
+      </div>
     </div>
   `);
 }
@@ -391,6 +420,42 @@ async function saveOutsideDuty(id) {
    } catch (error) {
      console.warn('Failed to save outside duty to Firebase:', error);
    }
+  }
+  renderMods();
+  dash();
+  saveState();
+  closeModal();
+}
+
+async function removeNightShift(id) {
+  const index = nightShifts.findIndex(item => `${item.modId}` === `${id}`);
+  if (index < 0) return alert('No night shift assigned to this moderator.');
+  const record = nightShifts[index];
+  nightShifts.splice(index, 1);
+  if (dbEnabled && !`${record.id}`.startsWith('night-')) {
+    try {
+      await db.collection('night_shifts').doc(record.id).delete();
+    } catch (error) {
+      console.warn('Failed to remove night shift from Firebase:', error);
+    }
+  }
+  renderMods();
+  dash();
+  saveState();
+  closeModal();
+}
+
+async function removeOutsideDuty(id) {
+  const index = outsideDuty.findIndex(item => `${item.modId}` === `${id}`);
+  if (index < 0) return alert('No outside duty assigned to this moderator.');
+  const record = outsideDuty[index];
+  outsideDuty.splice(index, 1);
+  if (dbEnabled && !`${record.id}`.startsWith('outside-')) {
+    try {
+      await db.collection('outside_duty').doc(record.id).delete();
+    } catch (error) {
+      console.warn('Failed to remove outside duty from Firebase:', error);
+    }
   }
   renderMods();
   dash();

@@ -78,13 +78,21 @@
           <h3>Today Outside Duty</h3>
           <div id="todayOutside"></div>
         </div>
+        <div>
+          <h3>Today's Absent</h3>
+          <div id="todayAbsent"></div>
+        </div>
       </div>
     </section>
 
     <section id="attendance" class="page hidden">
-      <div class="titleRow"><div><h2>Daily Attendance</h2><p class="sectionNote">Record attendance and keep the team updated.</p></div><input type="date" id="attDate" onchange="renderAttendance()"></div>
+      <div class="titleRow"><div><h2>Daily Attendance</h2><p class="sectionNote">Search moderators and update today's status without changing their permanent profile.</p></div></div>
+      <div class="panel form attendanceHeader">
+        <input id="attSearch" type="search" placeholder="Search moderators by name or status..." oninput="renderAttendance()">
+        <label>Date <input type="date" id="attDate" onchange="renderAttendance()"></label>
+        <button type="button" class="primary" onclick="saveAttendance()">Save Attendance</button>
+      </div>
       <div class="panel tableWrap"><table><thead><tr><th>SL</th><th>Name</th><th>Weekend</th><th>Status</th></tr></thead><tbody id="attBody"></tbody></table></div>
-      <button type="button" class="primary" onclick="saveAttendance()">Save Attendance</button>
     </section>
 
     <section id="moderators" class="page hidden">
