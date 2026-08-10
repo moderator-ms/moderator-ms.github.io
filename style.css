@@ -56,7 +56,7 @@ tbody tr:hover{background:rgba(255,255,255,.04)}
 .reportPrintHeader{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:18px;flex-wrap:wrap}
 .reportPrintHeader h2{margin:0;font-size:1.35rem}
 .reportPrintHeader p{margin:0;color:var(--muted);font-size:.96rem;max-width:720px}
-input,select{width:100%;padding:14px 16px;border-radius:14px;border:1px solid rgba(255,255,255,.16);background:rgba(17,34,58,.88);color:#eef4ff;transition:.18s ease}
+input,select{width:100%;padding:14px 16px;border-radius:14px;border:1px solid rgba(255,255,255,.16);background:rgba(17,34,58,.95);color:#eef4ff;transition:.18s ease;appearance:none;-webkit-appearance:none}
 input::placeholder,select::placeholder{color:rgba(255,255,255,.65)}
 select option{background:rgba(12,24,44,.98);color:#eef4ff}
 input:focus,select:focus{border-color:rgba(128,192,255,.7);outline:none;box-shadow:0 0 0 4px rgba(128,192,255,.16)}

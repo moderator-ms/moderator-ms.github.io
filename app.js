@@ -15,40 +15,13 @@ const dbEnabled = firebaseConfig.apiKey && !firebaseConfig.apiKey.includes('YOUR
 const storageKey = 'moderator-ms-state';
 const printReportBtn = document.getElementById('printReportButton');
 
-const seed = [
-  { name: 'Sefat Karim', weekend: 'Saturday', phone: '01781597975', joining: '2026-01-01' },
-  { name: 'Akram', weekend: 'Saturday', phone: '01871976484', joining: '2024-03-08' },
-  { name: 'Arman Alif', weekend: 'Saturday', phone: '01406274628', joining: '2025-10-04' },
-  { name: 'Sajedul Islam', weekend: 'Sunday', phone: '01876608766', joining: '2023-12-13' },
-  { name: 'Tarikul Islam', weekend: 'Sunday', phone: '01401248381', joining: '2026-01-03' },
-  { name: 'Tonmoy', weekend: 'Sunday', phone: '01921080031', joining: '2026-11-02' },
-  { name: 'Omar Faruk Majumder', weekend: 'Sunday', phone: '01675562296', joining: '2025-12-31' },
-  { name: 'Md Sujon', weekend: 'Monday', phone: '01762946309', joining: '2024-07-12' },
-  { name: 'Mosharof Hossain', weekend: 'Monday', phone: '01927917924', joining: '2026-01-01' },
-  { name: 'Md Raihan', weekend: 'Monday', phone: '01931070660', joining: '2026-06-27' },
-  { name: 'Moinul Islam', weekend: 'Tuesday', phone: '01602871511', joining: '2026-01-05' },
-  { name: 'Sifat Hossain', weekend: 'Tuesday', phone: '01984382210', joining: '2026-06-24' },
-  { name: 'Shakib Ahmed', weekend: 'Tuesday', phone: '01321818169', joining: '2026-07-28' },
-  { name: 'Al Arafat', weekend: 'Tuesday', phone: '01327948737', joining: '2026-01-05' },
-  { name: 'Kowshiq', weekend: 'Wednesday', phone: '01956363216', joining: '2024-01-19' },
-  { name: 'Mamun', weekend: 'Wednesday', phone: '01518707855', joining: '2025-07-09' },
-  { name: 'Sahil (Forever)', weekend: 'Wednesday', phone: '01947127960', joining: '2026-06-28' },
-  { name: 'Najmul Islam', weekend: 'Thursday', phone: '01782417078', joining: '2023-05-17' },
-  { name: 'Mehadi Hasan', weekend: 'Thursday', phone: '01646406186', joining: '2022-10-22' },
-  { name: 'Naim Khan', weekend: 'Thursday', phone: '01615354665', joining: '2025-01-09' },
-  { name: 'Rezaul Karim', weekend: 'Thursday', phone: '01407722355', joining: '2024-12-01' },
-  { name: 'Sami', weekend: 'Friday', phone: '01407914895', joining: '2024-10-02' },
-  { name: 'Sahil Sheikh', weekend: 'Friday', phone: '01626429771', joining: '2026-01-05' },
-  { name: 'Piyal Sarker', weekend: 'Friday', phone: '01705952384', joining: '2026-01-04' },
-  { name: 'Abu Torab', weekend: 'Friday', phone: '01722639097', joining: '2026-06-28' }
-];
-
 const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 let mods = [];
 let leaves = [];
 let nightShifts = [];
 let outsideDuty = [];
 let attendanceMap = {};
+let unsubscribes = [];
 let isAuthenticated = false;
 
 function isoLocal(d = new Date()) {
@@ -61,12 +34,13 @@ function dayOf(dateString) {
   return days[new Date(year, month - 1, day).getDay()];
 }
 
-function getStoredState() {
-  return JSON.parse(localStorage.getItem(storageKey) || '{}');
+function unsubscribeFirebaseListeners() {
+  unsubscribes.forEach(fn => fn && fn());
+  unsubscribes = [];
 }
 
 function saveState() {
-  localStorage.setItem(storageKey, JSON.stringify({ mods, leaves, nightShifts, outsideDuty, attendanceMap }));
+  // Local persistence disabled because Firebase is the single source of truth.
 }
 
 function statusLabel(mod) {
@@ -91,7 +65,7 @@ function activeOutside(id, date) {
 }
 
 async function attemptDbLoad(collectionName) {
-  if (!dbEnabled) return null;
+  if (!dbEnabled || !auth.currentUser) return null;
   try {
     const snapshot = await db.collection(collectionName).get();
     return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -99,6 +73,213 @@ async function attemptDbLoad(collectionName) {
     console.warn(`Firebase fetch exception for ${collectionName}:`, error);
     return null;
   }
+}
+
+async function migrateLocalDataToFirebase() {
+  if (!dbEnabled || !auth.currentUser) return;
+  const stored = JSON.parse(localStorage.getItem(storageKey) || '{}');
+  const hasData = (stored.mods?.length || 0) + (stored.leaves?.length || 0) + (stored.nightShifts?.length || 0) + (stored.outsideDuty?.length || 0) + (Object.keys(stored.attendanceMap || {}).length || 0);
+  if (!hasData) return;
+
+  try {
+    const remoteMods = await attemptDbLoad('moderators') || [];
+    const modByName = {};
+    remoteMods.forEach(mod => { if (mod.name) modByName[mod.name] = mod.id; });
+
+    if (Array.isArray(stored.mods)) {
+      await Promise.all(stored.mods.map(async mod => {
+        if (!mod.name) return;
+        const existingId = modByName[mod.name];
+        if (existingId) {
+          await db.collection('moderators').doc(existingId).set({
+            name: mod.name,
+            weekend: mod.weekend,
+            phone: mod.phone,
+            joining: mod.joining,
+            salary: mod.salary || ''
+          }, { merge: true });
+        } else {
+          const docRef = await db.collection('moderators').add({
+            name: mod.name,
+            weekend: mod.weekend,
+            phone: mod.phone,
+            joining: mod.joining,
+            salary: mod.salary || ''
+          });
+          modByName[mod.name] = docRef.id;
+        }
+      }));
+    }
+
+    if (Array.isArray(stored.leaves)) {
+      await Promise.all(stored.leaves.map(async leave => {
+        if (!leave.name || !leave.start || !leave.end) return;
+        const snapshot = await db.collection('leaves')
+          .where('name', '==', leave.name)
+          .where('start', '==', leave.start)
+          .where('end', '==', leave.end)
+          .where('type', '==', leave.type)
+          .limit(1)
+          .get();
+        if (!snapshot.empty) return;
+        await db.collection('leaves').add({
+          name: leave.name,
+          start: leave.start,
+          end: leave.end,
+          type: leave.type,
+          reason: leave.reason || ''
+        });
+      }));
+    }
+
+    if (Array.isArray(stored.nightShifts)) {
+      await Promise.all(stored.nightShifts.map(async shift => {
+        if (!shift.modId || !shift.start || !shift.end) return;
+        const remoteId = modByName[shift.name] || shift.modId;
+        const snapshot = await db.collection('night_shifts')
+          .where('modId', '==', remoteId)
+          .where('start', '==', shift.start)
+          .where('end', '==', shift.end)
+          .limit(1)
+          .get();
+        if (!snapshot.empty) return;
+        await db.collection('night_shifts').add({
+          modId: remoteId,
+          name: shift.name,
+          start: shift.start,
+          end: shift.end
+        });
+      }));
+    }
+
+    if (Array.isArray(stored.outsideDuty)) {
+      await Promise.all(stored.outsideDuty.map(async duty => {
+        if (!duty.modId || !duty.start || !duty.end) return;
+        const remoteId = modByName[duty.name] || duty.modId;
+        const snapshot = await db.collection('outside_duty')
+          .where('modId', '==', remoteId)
+          .where('start', '==', duty.start)
+          .where('end', '==', duty.end)
+          .limit(1)
+          .get();
+        if (!snapshot.empty) return;
+        await db.collection('outside_duty').add({
+          modId: remoteId,
+          name: duty.name,
+          start: duty.start,
+          end: duty.end,
+          notes: duty.notes || ''
+        });
+      }));
+    }
+
+    if (stored.attendanceMap && typeof stored.attendanceMap === 'object') {
+      const attendanceEntries = [];
+      Object.keys(stored.attendanceMap).forEach(date => {
+        const dayAttendance = stored.attendanceMap[date];
+        if (!dayAttendance || typeof dayAttendance !== 'object') return;
+        Object.keys(dayAttendance).forEach(name => {
+          attendanceEntries.push({ date, name, status: dayAttendance[name] });
+        });
+      });
+      await Promise.all(attendanceEntries.map(item => {
+        const id = `${item.date}_${item.name}`;
+        return db.collection('attendance').doc(id).set(item);
+      }));
+    }
+
+    localStorage.removeItem(storageKey);
+  } catch (error) {
+    console.warn('Failed to migrate local data to Firebase:', error);
+  }
+}
+
+async function subscribeFirebaseCollections() {
+  if (!dbEnabled || !auth.currentUser) return;
+  unsubscribeFirebaseListeners();
+
+  const nextMods = db.collection('moderators').onSnapshot(snapshot => {
+    mods = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), salary: doc.data().salary || '' }));
+    fillLeave();
+    renderMods();
+    dash();
+    renderAttendance();
+    renderLeaves();
+  }, error => console.warn('Realtime moderators subscription failed:', error));
+  unsubscribes.push(nextMods);
+
+  const nextLeaves = db.collection('leaves').onSnapshot(snapshot => {
+    leaves = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    fillLeave();
+    renderLeaves();
+    dash();
+  }, error => console.warn('Realtime leaves subscription failed:', error));
+  unsubscribes.push(nextLeaves);
+
+  const nextNight = db.collection('night_shifts').onSnapshot(snapshot => {
+    nightShifts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    renderMods();
+    dash();
+  }, error => console.warn('Realtime night_shifts subscription failed:', error));
+  unsubscribes.push(nextNight);
+
+  const nextOutside = db.collection('outside_duty').onSnapshot(snapshot => {
+    outsideDuty = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    renderMods();
+    dash();
+  }, error => console.warn('Realtime outside_duty subscription failed:', error));
+  unsubscribes.push(nextOutside);
+}
+
+async function loadFirebaseData() {
+  if (!dbEnabled || !auth.currentUser) return;
+
+  const dbMods = await attemptDbLoad('moderators');
+  mods = dbMods?.map(mod => ({
+    id: mod.id,
+    name: mod.name,
+    weekend: mod.weekend,
+    phone: mod.phone,
+    joining: mod.joining,
+    salary: mod.salary || ''
+  })) || [];
+
+  const dbLeaves = await attemptDbLoad('leaves');
+  leaves = dbLeaves?.map(item => ({
+    id: item.id,
+    name: item.name,
+    start: item.start,
+    end: item.end,
+    type: item.type,
+    reason: item.reason
+  })) || [];
+
+  const dbNight = await attemptDbLoad('night_shifts');
+  nightShifts = dbNight?.map(item => ({
+    id: item.id,
+    modId: item.modId || item.mod_id?.toString() || item.modId?.toString(),
+    name: item.name,
+    start: item.start || item.start_date,
+    end: item.end || item.end_date
+  })) || [];
+
+  const dbOutside = await attemptDbLoad('outside_duty');
+  outsideDuty = dbOutside?.map(item => ({
+    id: item.id,
+    modId: item.modId || item.mod_id?.toString() || item.modId?.toString(),
+    name: item.name,
+    start: item.start || item.start_date,
+    end: item.end || item.end_date,
+    notes: item.notes || item.note || ''
+  })) || [];
+
+  fillLeave();
+  renderConfig();
+  updateAccessUI();
+  dash();
+  renderAttendance();
+  renderMods();
+  renderLeaves();
 }
 
 function show(pageId) {
@@ -123,7 +304,7 @@ function updateAccessUI() {
 }
 
 async function getAttendance(date) {
-  if (dbEnabled) {
+  if (dbEnabled && auth.currentUser) {
     try {
       const snapshot = await db.collection('attendance').where('date', '==', date).get();
       const map = {};
@@ -146,7 +327,7 @@ async function saveAttendance() {
     updates.push({ date, name: select.dataset.name, status: select.value });
   });
 
-  if (dbEnabled) {
+  if (dbEnabled && auth.currentUser) {
     try {
       await Promise.all(updates.map(item => {
         const id = `${item.date}_${item.name}`;
@@ -243,6 +424,12 @@ async function addMod() {
     try {
       const docRef = await db.collection('moderators').add({ name, weekend, phone, joining, salary });
       newMod.id = docRef.id;
+      modName.value = '';
+      modPhone.value = '';
+      modJoining.value = '';
+      modSalary.value = '';
+      await loadFirebaseData();
+      return;
     } catch (error) {
       console.warn('Failed to save moderator to Firebase:', error);
     }
@@ -263,7 +450,7 @@ async function delMod(id) {
   const mod = mods.find(item => `${item.id}` === `${id}`);
   if (!mod) return;
 
-  if (dbEnabled && !`${mod.id}`.startsWith('local-')) {
+   if (dbEnabled && mod.id) {
    try {
      await db.collection('moderators').doc(mod.id).delete();
      const nightSnapshot = await db.collection('night_shifts').where('modId', '==', mod.id).get();
@@ -333,16 +520,24 @@ async function saveModChanges(id) {
 
   if (!name || !joining) return alert('Name and joining date are required.');
 
-  const updated = { name, weekend, phone, joining };
-  if (dbEnabled && !`${mod.id}`.startsWith('local-')) {
+   const updated = { name, weekend, phone, joining, salary };
+  if (dbEnabled) {
    try {
-     await db.collection('moderators').doc(mod.id).update(updated);
+     if (`${mod.id}`.startsWith('local-')) {
+       const docRef = await db.collection('moderators').add(updated);
+       mod.id = docRef.id;
+     } else {
+       await db.collection('moderators').doc(mod.id).set(updated, { merge: true });
+     }
+     await loadFirebaseData();
+     closeModal();
+     return;
    } catch (error) {
      console.warn('Failed to update moderator in Firebase:', error);
    }
   }
 
-  Object.assign(mod, updated, { salary });
+   Object.assign(mod, updated);
   renderMods();
   fillLeave();
   saveState();
@@ -432,7 +627,7 @@ async function removeNightShift(id) {
   if (index < 0) return alert('No night shift assigned to this moderator.');
   const record = nightShifts[index];
   nightShifts.splice(index, 1);
-  if (dbEnabled && !`${record.id}`.startsWith('night-')) {
+  if (dbEnabled && record?.id) {
     try {
       await db.collection('night_shifts').doc(record.id).delete();
     } catch (error) {
@@ -450,7 +645,7 @@ async function removeOutsideDuty(id) {
   if (index < 0) return alert('No outside duty assigned to this moderator.');
   const record = outsideDuty[index];
   outsideDuty.splice(index, 1);
-  if (dbEnabled && !`${record.id}`.startsWith('outside-')) {
+  if (dbEnabled && record?.id) {
     try {
       await db.collection('outside_duty').doc(record.id).delete();
     } catch (error) {
@@ -504,7 +699,7 @@ async function delLeave(id) {
   const leave = leaves.find(item => item.id === id);
   if (!leave) return;
   if (!confirm('Delete this leave?')) return;
-  if (dbEnabled && !leave.id.startsWith('leave-')) {
+   if (dbEnabled && leave.id) {
    try {
      await db.collection('leaves').doc(leave.id).delete();
    } catch (error) {
@@ -537,7 +732,7 @@ async function generateReport() {
   const type = reportType.value;
   const dateRange = getRange(start, end);
   let attendanceRange = {};
-  if (dbEnabled) {
+  if (dbEnabled && auth.currentUser) {
    try {
      const snapshot = await db.collection('attendance').where('date', '>=', start).where('date', '<=', end).get();
      snapshot.docs.forEach(doc => {
@@ -623,16 +818,51 @@ function printReport() {
     return;
   }
 
-  document.body.classList.add('print-mode');
-  window.onafterprint = () => document.body.classList.remove('print-mode');
-  try {
-    window.print();
-  } catch (error) {
-    console.warn('Print failed:', error);
-    alert('Unable to print from this browser. Please use your system print dialog or export the page.');
-  } finally {
-    setTimeout(() => document.body.classList.remove('print-mode'), 1000);
+  const printWindow = window.open('', '_blank');
+  if (!printWindow) {
+    alert('Unable to open print preview. Please allow popups for this site.');
+    return;
   }
+
+  const styles = `
+    <style>
+      body { font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #111; background: #fff; margin: 0; padding: 24px; }
+      h2, h3, p, table { color: #111; }
+      .reportPrintHeader { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; flex-wrap:wrap; margin-bottom:18px; }
+      .reportPrintHeader h2 { margin:0; font-size:1.5rem; }
+      .reportPrintHeader p { margin:0; color:#444; font-size:.95rem; }
+      table { width:100%; border-collapse:collapse; margin-top:18px; }
+      th, td { border:1px solid #333; padding:12px 14px; text-align:left; }
+      th { background:#f3f3f3; }
+      tbody tr:nth-child(even){ background:#fafafa; }
+      .sectionNote { color:#555; margin:0 0 16px; }
+      .notes { margin-top:24px; }
+      .notes h3 { margin-bottom:12px; }
+      .notes p { margin:8px 0; }
+    </style>
+  `;
+
+  const content = `
+    <!doctype html>
+    <html>
+      <head>
+        <meta charset="utf-8">
+        <title>Print Report</title>
+        ${styles}
+      </head>
+      <body>
+        ${reportOut.innerHTML}
+      </body>
+    </html>
+  `;
+
+  printWindow.document.write(content);
+  printWindow.document.close();
+  printWindow.focus();
+  printWindow.onload = () => {
+    printWindow.print();
+    printWindow.close();
+  };
 }
 
 function renderConfig() {
@@ -690,10 +920,6 @@ async function handleLogin() {
 
   try {
     await auth.signInWithEmailAndPassword(email, password);
-    isAuthenticated = true;
-    updateAccessUI();
-    renderConfig();
-    show('dashboard');
   } catch (error) {
     console.warn('Firebase login failed:', error);
     alert(error.message || 'Invalid credentials. Please verify your username and password.');
@@ -765,81 +991,11 @@ async function openDashboardModal(type) {
 }
 
 async function init() {
-  const stored = getStoredState();
-  if (stored.nightShifts) nightShifts = stored.nightShifts;
-  if (stored.outsideDuty) outsideDuty = stored.outsideDuty;
-  if (stored.attendanceMap) attendanceMap = stored.attendanceMap;
-
-  const dbMods = await attemptDbLoad('moderators');
-  if (dbMods && dbMods.length > 0) {
-    mods = dbMods.map(mod => {
-      const local = stored.mods?.find(item => item.id === mod.id || item.name === mod.name);
-      return {
-        id: mod.id || `db-${Math.random().toString(36).slice(2, 6)}`,
-        name: mod.name,
-        weekend: mod.weekend,
-        phone: mod.phone,
-        joining: mod.joining,
-        salary: local?.salary || mod.salary || ''
-      };
-    });
-  } else if (stored.mods) {
-    mods = stored.mods;
-  } else {
-    mods = seed.map(item => ({ id: `local-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, ...item, salary: '' }));
-  }
-
-  const dbLeaves = await attemptDbLoad('leaves');
-  if (dbLeaves) {
-    leaves = dbLeaves.map(item => ({
-      id: item.id || `db-${Math.random().toString(36).slice(2, 6)}`,
-      name: item.name,
-      start: item.start,
-      end: item.end,
-      type: item.type,
-      reason: item.reason
-    }));
-  } else if (stored.leaves) {
-    leaves = stored.leaves;
-  }
-
-  const dbNight = await attemptDbLoad('night_shifts');
-  if (dbNight) {
-    nightShifts = dbNight.map(item => ({
-      id: item.id || `night-${Math.random().toString(36).slice(2, 6)}`,
-      modId: item.modId || item.mod_id?.toString() || item.modId?.toString(),
-      name: item.name,
-      start: item.start || item.start_date,
-      end: item.end || item.end_date
-    }));
-  } else if (stored.nightShifts) {
-    nightShifts = stored.nightShifts;
-  }
-
-  const dbOutside = await attemptDbLoad('outside_duty');
-  if (dbOutside) {
-    outsideDuty = dbOutside.map(item => ({
-      id: item.id || `outside-${Math.random().toString(36).slice(2, 6)}`,
-      modId: item.modId || item.mod_id?.toString() || item.modId?.toString(),
-      name: item.name,
-      start: item.start || item.start_date,
-      end: item.end || item.end_date,
-      notes: item.notes || item.note || ''
-    }));
-  } else if (stored.outsideDuty) {
-    outsideDuty = stored.outsideDuty;
-  }
-
-  if (dbEnabled && dbMods && dbMods.length === 0) {
-    try {
-      mods = await Promise.all(seed.map(async item => {
-        const docRef = await db.collection('moderators').add(item);
-        return { id: docRef.id, ...item, salary: '' };
-      }));
-    } catch (error) {
-      console.warn('Failed to seed Firebase moderators:', error);
-    }
-  }
+  mods = [];
+  leaves = [];
+  nightShifts = [];
+  outsideDuty = [];
+  attendanceMap = {};
 
   fillLeave();
   renderConfig();
@@ -851,14 +1007,27 @@ async function init() {
   reportEnd.value = isoLocal();
   if (printReportBtn) printReportBtn.disabled = true;
 
-  auth.onAuthStateChanged(user => {
+  auth.onAuthStateChanged(async user => {
     isAuthenticated = !!user;
     renderConfig();
     updateAccessUI();
     if (isAuthenticated) {
+      await migrateLocalDataToFirebase();
+      await loadFirebaseData();
+      await subscribeFirebaseCollections();
       show('dashboard');
     }
   });
+
+  if (auth.currentUser) {
+    isAuthenticated = true;
+    renderConfig();
+    updateAccessUI();
+    await migrateLocalDataToFirebase();
+    await loadFirebaseData();
+    await subscribeFirebaseCollections();
+    show('dashboard');
+  }
 }
 
 setInterval(() => { clock.textContent = new Date().toLocaleString(); }, 1000);
