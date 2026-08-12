@@ -395,17 +395,36 @@ async function renderAttendance() {
   const saved = await getAttendance(date);
   const query = (document.getElementById('attSearch')?.value || '').toLowerCase();
 
-  attBody.innerHTML = mods
-    .filter(mod => {
+  // Group moderators by their assigned weekly off day to make it easy to review per-day counts.
+  const groups = {};
+  days.forEach(d => groups[d] = []);
+  groups['Unassigned'] = [];
+
+  mods.forEach(mod => {
+    const key = mod.weekend && groups[mod.weekend] ? mod.weekend : 'Unassigned';
+    groups[key].push(mod);
+  });
+
+  let html = '';
+  let globalIndex = 1;
+  // Iterate in the order of the days array so groups appear consistently
+  for (const dayKey of [...days, 'Unassigned']) {
+    const list = groups[dayKey].filter(mod => {
       const text = `${mod.name} ${mod.weekend} ${saved[mod.name] || ''}`.toLowerCase();
       return text.includes(query);
-    })
-    .map((mod, index) => {
-      // Saved attendance for the day should take precedence over scheduled weekly off
+    });
+    if (!list.length) continue;
+
+    // Group header with count
+    html += `<tr class="groupHeader"><td colspan="4"><strong>${dayKey} (${list.length})</strong></td></tr>`;
+
+    list.forEach(mod => {
       const auto = saved[mod.name] || (activeLeave(mod.name, date) ? 'Leave' : mod.weekend === dayName ? 'Weekly Off' : 'Present');
-      return `<tr><td>${index + 1}</td><td>${mod.name}</td><td>${mod.weekend}</td><td><select data-name="${mod.name}"><option ${auto === 'Present' ? 'selected' : ''}>Present</option><option ${auto === 'Absent' ? 'selected' : ''}>Absent</option><option ${auto === 'Leave' ? 'selected' : ''}>Leave</option><option ${auto === 'Weekly Off' ? 'selected' : ''}>Weekly Off</option></select></td></tr>`;
-    })
-    .join('');
+      html += `<tr><td>${globalIndex++}</td><td>${mod.name}</td><td>${mod.weekend || '-'}</td><td><select data-name="${mod.name}"><option ${auto === 'Present' ? 'selected' : ''}>Present</option><option ${auto === 'Absent' ? 'selected' : ''}>Absent</option><option ${auto === 'Leave' ? 'selected' : ''}>Leave</option><option ${auto === 'Weekly Off' ? 'selected' : ''}>Weekly Off</option></select></td></tr>`;
+    });
+  }
+
+  attBody.innerHTML = html;
 }
 
 function renderMods() {
