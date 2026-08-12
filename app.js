@@ -429,12 +429,33 @@ async function renderAttendance() {
 
 function renderMods() {
   const query = (search.value || '').toLowerCase();
-  const rows = mods
-    .filter(mod => mod.name.toLowerCase().includes(query))
-    .map((mod, index) => {
-      return `<tr><td>${index + 1}</td><td>${mod.name}</td><td>${mod.weekend}</td><td>${mod.salary || '-'}</td><td>${mod.phone}</td><td>${mod.joining}</td><td><span class="badge">${statusLabel(mod)}</span></td><td><button class="secondary" onclick="openEditMod('${mod.id}')">Edit</button> <button class="secondary" onclick="openAssignNight('${mod.id}')">Night</button> <button class="secondary" onclick="openAssignOutside('${mod.id}')">Outside</button> <button class="ghostBtn" onclick="delMod('${mod.id}')">Delete</button></td></tr>`;
+  // Group moderators by their assigned weekly off day to mirror the Attendance view
+  const groups = {};
+  days.forEach(d => groups[d] = []);
+  groups['Unassigned'] = [];
+
+  mods.forEach(mod => {
+    const key = mod.weekend && groups[mod.weekend] ? mod.weekend : 'Unassigned';
+    groups[key].push(mod);
+  });
+
+  let html = '';
+  let globalIndex = 1;
+  for (const dayKey of [...days, 'Unassigned']) {
+    const list = groups[dayKey].filter(mod => {
+      const text = `${mod.name} ${mod.weekend} ${mod.salary || ''} ${mod.phone || ''}`.toLowerCase();
+      return text.includes(query);
     });
-  modBody.innerHTML = rows.join('');
+    if (!list.length) continue;
+
+    html += `<tr class="groupHeader"><td colspan="8"><strong>${dayKey} (${list.length})</strong></td></tr>`;
+
+    list.forEach(mod => {
+      html += `<tr><td>${globalIndex++}</td><td>${mod.name}</td><td>${mod.weekend || '-'}</td><td>${mod.salary || '-'}</td><td>${mod.phone || '-'}</td><td>${mod.joining || '-'}</td><td><span class="badge">${statusLabel(mod)}</span></td><td><button class="secondary" onclick="openEditMod('${mod.id}')">Edit</button> <button class="secondary" onclick="openAssignNight('${mod.id}')">Night</button> <button class="secondary" onclick="openAssignOutside('${mod.id}')">Outside</button> <button class="ghostBtn" onclick="delMod('${mod.id}')">Delete</button></td></tr>`;
+    });
+  }
+
+  modBody.innerHTML = html;
 }
 
 async function addMod() {
