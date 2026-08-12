@@ -52,6 +52,17 @@ function statusLabel(mod) {
   return 'Active';
 }
 
+// Determine the effective status for a moderator on a specific date, giving
+// precedence to manual attendance overrides (attendance entries), then
+// scheduled leaves, then weekend, then present.
+function effectiveStatus(mod, date, attendanceObj = {}) {
+  const override = attendanceObj && attendanceObj[mod.name];
+  if (override) return override;
+  if (activeLeave(mod.name, date)) return 'Leave';
+  if (mod.weekend === dayOf(date)) return 'Weekly Off';
+  return 'Present';
+}
+
 function activeLeave(name, date) {
   return leaves.some(item => item.name === name && date >= item.start && date <= item.end);
 }
@@ -346,13 +357,21 @@ async function dash() {
   const date = isoLocal();
   const dayName = dayOf(date);
   const attendance = await getAttendance(date);
-  const offList = mods.filter(item => item.weekend === dayName);
-  const leaveToday = mods.filter(item => activeLeave(item.name, date));
-  const presentList = mods.filter(item => {
-    const status = attendance[item.name] || (activeLeave(item.name, date) ? 'Leave' : item.weekend === dayName ? 'Weekly Off' : 'Present');
-    return status === 'Present';
+  // Build lists using effectiveStatus so manual attendance overrides take precedence
+  const offList = mods.filter(item => {
+    const status = attendance[item.name];
+    if (status) return status === 'Weekly Off';
+    return item.weekend === dayName;
   });
-  const absentList = mods.filter(item => attendance[item.name] === 'Absent');
+
+  const leaveToday = mods.filter(item => {
+    const status = attendance[item.name];
+    if (status) return status === 'Leave';
+    return activeLeave(item.name, date);
+  });
+
+  const presentList = mods.filter(item => effectiveStatus(item, date, attendance) === 'Present');
+  const absentList = mods.filter(item => effectiveStatus(item, date, attendance) === 'Absent');
   const nightList = mods.filter(item => activeNight(item.id, date));
   const outsideList = mods.filter(item => activeOutside(item.id, date));
 
@@ -382,11 +401,8 @@ async function renderAttendance() {
       return text.includes(query);
     })
     .map((mod, index) => {
-      const auto = activeLeave(mod.name, date)
-        ? 'Leave'
-        : mod.weekend === dayName
-        ? 'Weekly Off'
-        : saved[mod.name] || 'Present';
+      // Saved attendance for the day should take precedence over scheduled weekly off
+      const auto = saved[mod.name] || (activeLeave(mod.name, date) ? 'Leave' : mod.weekend === dayName ? 'Weekly Off' : 'Present');
       return `<tr><td>${index + 1}</td><td>${mod.name}</td><td>${mod.weekend}</td><td><select data-name="${mod.name}"><option ${auto === 'Present' ? 'selected' : ''}>Present</option><option ${auto === 'Absent' ? 'selected' : ''}>Absent</option><option ${auto === 'Leave' ? 'selected' : ''}>Leave</option><option ${auto === 'Weekly Off' ? 'selected' : ''}>Weekly Off</option></select></td></tr>`;
     })
     .join('');
