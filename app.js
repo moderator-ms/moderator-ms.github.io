@@ -52,19 +52,23 @@ function statusLabel(mod) {
   return 'Active';
 }
 
-// Determine the effective status for a moderator on a specific date, giving
-// precedence to manual attendance overrides (attendance entries), then
-// scheduled leaves, then weekend, then present.
-function effectiveStatus(mod, date, attendanceObj = {}) {
-  const override = attendanceObj && attendanceObj[mod.name];
-  if (override) return override;
-  if (activeLeave(mod.name, date)) return 'Leave';
-  if (mod.weekend === dayOf(date)) return 'Weekly Off';
-  return 'Present';
+// Ensure activeLeave performs case-insensitive trimming and date range verification
+function activeLeave(name, date) {
+  if (!name || !date) return false;
+  return leaves.some(item => {
+    const isSameMod = item.name.trim().toLowerCase() === name.trim().toLowerCase();
+    const isWithinRange = date >= item.start && date <= item.end;
+    return isSameMod && isWithinRange;
+  });
 }
 
-function activeLeave(name, date) {
-  return leaves.some(item => item.name === name && date >= item.start && date <= item.end);
+// prioritize active leaves over default attendance state
+function effectiveStatus(mod, date, attendanceObj = {}) {
+  if (activeLeave(mod.name, date)) return 'Leave';
+  const override = attendanceObj && attendanceObj[mod.name];
+  if (override) return override;
+  if (mod.weekend === dayOf(date)) return 'Weekly Off';
+  return 'Present';
 }
 
 function activeNight(id, date) {
@@ -353,23 +357,18 @@ async function saveAttendance() {
   alert('Attendance saved successfully.');
   dash();
 }
+// Update dashboard counters based on active date range
 async function dash() {
-  const date = isoLocal();
-  const dayName = dayOf(date);
+  const dashDateInput = document.getElementById('dashDate');
+  const date = (dashDateInput && dashDateInput.value) ? dashDateInput.value : isoLocal();
+  if (dashDateInput && !dashDateInput.value) {
+    dashDateInput.value = date;
+  }
+
   const attendance = await getAttendance(date);
-  // Build lists using effectiveStatus so manual attendance overrides take precedence
-  const offList = mods.filter(item => {
-    const status = attendance[item.name];
-    if (status) return status === 'Weekly Off';
-    return item.weekend === dayName;
-  });
 
-  const leaveToday = mods.filter(item => {
-    const status = attendance[item.name];
-    if (status) return status === 'Leave';
-    return activeLeave(item.name, date);
-  });
-
+  const offList = mods.filter(item => effectiveStatus(item, date, attendance) === 'Weekly Off');
+  const leaveToday = mods.filter(item => effectiveStatus(item, date, attendance) === 'Leave');
   const presentList = mods.filter(item => effectiveStatus(item, date, attendance) === 'Present');
   const absentList = mods.filter(item => effectiveStatus(item, date, attendance) === 'Absent');
   const nightList = mods.filter(item => activeNight(item.id, date));
@@ -382,10 +381,11 @@ async function dash() {
   absent.textContent = absentList.length;
   nightCount.textContent = nightList.length;
   outsideCount.textContent = outsideList.length;
-  todayOff.innerHTML = offList.length ? offList.map(item => `<span class="badge">${item.name}</span>`).join(' ') : 'No weekly off today.';
-  todayNight.innerHTML = nightList.length ? nightList.map(item => `<span class="badge">${item.name}</span>`).join(' ') : 'No night shift assigned today.';
-  todayOutside.innerHTML = outsideList.length ? outsideList.map(item => `<span class="badge">${item.name}</span>`).join(' ') : 'No outside duty today.';
-  todayAbsent.innerHTML = absentList.length ? absentList.map(item => `<span class="badge">${item.name}</span>`).join(' ') : 'No absences today.';
+
+  todayOff.innerHTML = offList.length ? offList.map(item => `<span class="badge">${item.name}</span>`).join(' ') : 'No weekly off for this date.';
+  todayNight.innerHTML = nightList.length ? nightList.map(item => `<span class="badge">${item.name}</span>`).join(' ') : 'No night shift assigned for this date.';
+  todayOutside.innerHTML = outsideList.length ? outsideList.map(item => `<span class="badge">${item.name}</span>`).join(' ') : 'No outside duty for this date.';
+  todayAbsent.innerHTML = absentList.length ? absentList.map(item => `<span class="badge">${item.name}</span>`).join(' ') : 'No absences for this date.';
 }
 
 async function renderAttendance() {
@@ -995,37 +995,39 @@ async function logout() {
 }
 
 async function openDashboardModal(type) {
-  const date = isoLocal();
+  const dashDateInput = document.getElementById('dashDate');
+  const date = (dashDateInput && dashDateInput.value) ? dashDateInput.value : isoLocal();
   const dayName = dayOf(date);
   const attendance = await getAttendance(date);
   const titleMap = {
     total: 'All Moderators',
-    present: 'Present Today',
-    off: 'Weekly Off Today',
-    leave: 'On Leave Today',
-    absent: 'Absent Today',
-    night: 'Night Shift Today',
-    outside: 'Outside Duty Today'
+    present: 'Present',
+    off: 'Weekly Off',
+    leave: 'On Leave',
+    absent: 'Absent',
+    night: 'Night Shift',
+    outside: 'Outside Duty'
   };
   const title = titleMap[type] || 'Details';
   let items = [];
+
   if (type === 'total') {
     items = mods.map(mod => `${mod.name} — ${mod.weekend} — ${mod.salary ? `Salary: ${mod.salary}` : 'Salary unset'}`);
   }
   if (type === 'present') {
-    items = mods.filter(mod => {
-      const status = attendance[mod.name] || (activeLeave(mod.name, date) ? 'Leave' : mod.weekend === dayName ? 'Weekly Off' : 'Present');
-      return status === 'Present';
-    }).map(mod => mod.name);
+    items = mods.filter(mod => effectiveStatus(mod, date, attendance) === 'Present').map(mod => mod.name);
   }
   if (type === 'off') {
-    items = mods.filter(mod => mod.weekend === dayName).map(mod => mod.name);
+    items = mods.filter(mod => effectiveStatus(mod, date, attendance) === 'Weekly Off').map(mod => mod.name);
   }
   if (type === 'leave') {
-    items = mods.filter(mod => activeLeave(mod.name, date)).map(mod => `${mod.name} (${leaves.find(l => l.name === mod.name && date >= l.start && date <= l.end)?.type || 'Leave'})`);
+    items = mods.filter(mod => effectiveStatus(mod, date, attendance) === 'Leave').map(mod => {
+      const leaveRecord = leaves.find(l => l.name === mod.name && date >= l.start && date <= l.end);
+      return `${mod.name} (${leaveRecord?.type || 'Leave'})`;
+    });
   }
   if (type === 'absent') {
-    items = mods.filter(mod => attendance[mod.name] === 'Absent').map(mod => mod.name);
+    items = mods.filter(mod => effectiveStatus(mod, date, attendance) === 'Absent').map(mod => mod.name);
   }
   if (type === 'night') {
     items = mods.filter(mod => activeNight(mod.id, date)).map(mod => {
@@ -1043,7 +1045,7 @@ async function openDashboardModal(type) {
   if (!items.length) {
     items = ['No records available for this section.'];
   }
-  openModal(title, `Data for ${date}.`, '', `<div class="panel"><ul>${items.map(item => `<li>${item}</li>`).join('')}</ul></div>`);
+  openModal(`${title} (${date})`, `Data for ${date}.`, '', `<div class="panel"><ul>${items.map(item => `<li>${item}</li>`).join('')}</ul></div>`);
 }
 
 async function init() {

@@ -55,7 +55,18 @@
 
   <main>
     <section id="dashboard" class="page">
-      <div class="titleRow"><div><h2>Dashboard</h2><p class="sectionNote">Click any card to see details and active assignments.</p></div></div>
+  <div class="titleRow">
+    <div>
+      <h2>Dashboard</h2>
+      <p class="sectionNote">Click any card to see details and active assignments.</p>
+    </div>
+    <div style="min-width: 200px;">
+      <label style="display: flex; flex-direction: column; gap: 4px; font-size: 0.9rem; color: var(--muted);">
+        Dashboard Date
+        <input type="date" id="dashDate" onchange="dash()">
+      </label>
+    </div>
+  </div>
       <div class="cards">
         <div class="card interactive" onclick="openDashboardModal('total')"><b id="total">0</b><span>Total Moderators</span></div>
         <div class="card interactive" onclick="openDashboardModal('present')"><b id="present">0</b><span>Present Today</span></div>
